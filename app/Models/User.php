@@ -3,13 +3,15 @@
 namespace App\Models;
 
 // use Illuminate\Contracts\Auth\MustVerifyEmail;
+use Database\Factories\UserFactory;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
+use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Foundation\Auth\User as Authenticatable;
 use Illuminate\Notifications\Notifiable;
 
 class User extends Authenticatable
 {
-    /** @use HasFactory<\Database\Factories\UserFactory> */
+    /** @use HasFactory<UserFactory> */
     use HasFactory, Notifiable;
 
     /**
@@ -21,6 +23,8 @@ class User extends Authenticatable
         'name',
         'email',
         'password',
+        'onboarding_completed_at',
+        'financial_profile',
     ];
 
     /**
@@ -42,7 +46,44 @@ class User extends Authenticatable
     {
         return [
             'email_verified_at' => 'datetime',
+            'onboarding_completed_at' => 'datetime',
+            'financial_profile' => 'array',
             'password' => 'hashed',
         ];
+    }
+
+    /**
+     * Structured money facts for prompts (empty until tools / imports populate).
+     *
+     * @return array<string, mixed>
+     */
+    public function financialProfilePayload(): array
+    {
+        $profile = $this->financial_profile;
+
+        return is_array($profile) ? $profile : [];
+    }
+
+    public function needsFinancialOnboarding(): bool
+    {
+        return $this->onboarding_completed_at === null;
+    }
+
+    /** @return HasMany<IncomeSource, User> */
+    public function incomeSources(): HasMany
+    {
+        return $this->hasMany(IncomeSource::class);
+    }
+
+    /** @return HasMany<Commitment, User> */
+    public function commitments(): HasMany
+    {
+        return $this->hasMany(Commitment::class);
+    }
+
+    /** @return HasMany<Debt, User> */
+    public function debts(): HasMany
+    {
+        return $this->hasMany(Debt::class);
     }
 }

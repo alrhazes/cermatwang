@@ -29,6 +29,11 @@ export interface SharedData {
     [key: string]: unknown;
 }
 
+export interface ChatPageProps extends SharedData {
+    needsFinancialOnboarding: boolean;
+    chatWelcome: string;
+}
+
 export interface User {
     id: number;
     name: string;

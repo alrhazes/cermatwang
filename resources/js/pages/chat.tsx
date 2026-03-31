@@ -2,8 +2,8 @@ import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import AppLayout from '@/layouts/app-layout';
 import { cn, createClientId } from '@/lib/utils';
-import { type BreadcrumbItem, type SharedData } from '@/types';
-import { Head, usePage } from '@inertiajs/react';
+import { type BreadcrumbItem, type ChatPageProps } from '@/types';
+import { Head, router, usePage } from '@inertiajs/react';
 import { Loader2, SendHorizontal } from 'lucide-react';
 import { useEffect, useId, useRef, useState } from 'react';
 
@@ -22,30 +22,35 @@ interface ChatMessage {
     content: string;
 }
 
-const initialMessages: ChatMessage[] = [
-    {
-        id: 'welcome',
-        role: 'assistant',
-        content:
-            "Hi — I'm your budget assistant. Tell me about your income, fixed bills, debts, or goals in your own words, and I'll help you think through a plan.",
-    },
-];
+interface PendingToolCall {
+    id: string;
+    tool_calls: unknown[];
+}
 
 export default function Chat() {
-    const { csrfToken } = usePage<SharedData>().props;
+    const { csrfToken, needsFinancialOnboarding, chatWelcome } = usePage<ChatPageProps>().props;
     const formId = useId();
     const listRef = useRef<HTMLDivElement>(null);
-    const [messages, setMessages] = useState<ChatMessage[]>(initialMessages);
+    const [messages, setMessages] = useState<ChatMessage[]>(() => [
+        {
+            id: 'welcome',
+            role: 'assistant',
+            content: chatWelcome,
+        },
+    ]);
     const [draft, setDraft] = useState('');
     const [isSending, setIsSending] = useState(false);
     const [sendError, setSendError] = useState<string | null>(null);
+    const [isCompletingOnboarding, setIsCompletingOnboarding] = useState(false);
+    const [pending, setPending] = useState<PendingToolCall | null>(null);
+    const [isApplyingPending, setIsApplyingPending] = useState(false);
 
     useEffect(() => {
         const el = listRef.current;
         if (el) {
             el.scrollTop = el.scrollHeight;
         }
-    }, [messages]);
+    }, [messages, pending]);
 
     function handleSubmit(e: React.FormEvent) {
         e.preventDefault();
@@ -54,7 +59,7 @@ export default function Chat() {
 
     async function submitMessage() {
         const trimmed = draft.trim();
-        if (!trimmed || isSending) {
+        if (!trimmed || isSending || pending) {
             return;
         }
 
@@ -128,6 +133,13 @@ export default function Chat() {
                     content,
                 },
             ]);
+
+            if ('pending' in (data as Record<string, unknown>) && typeof (data as any).pending === 'object' && (data as any).pending) {
+                const p = (data as any).pending as { id?: unknown; tool_calls?: unknown };
+                if (typeof p.id === 'string' && Array.isArray(p.tool_calls)) {
+                    setPending({ id: p.id, tool_calls: p.tool_calls });
+                }
+            }
         } catch {
             setSendError('Network error. Check your connection and try again.');
         } finally {
@@ -149,10 +161,117 @@ export default function Chat() {
         void submitMessage();
     }
 
+    function completeOnboarding() {
+        setIsCompletingOnboarding(true);
+        router.post(
+            route('chat.onboarding.complete'),
+            {},
+            {
+                preserveScroll: true,
+                onFinish: () => setIsCompletingOnboarding(false),
+            },
+        );
+    }
+
+    async function confirmPending() {
+        if (!pending || isApplyingPending) {
+            return;
+        }
+        setIsApplyingPending(true);
+        setSendError(null);
+        try {
+            const response = await fetch(route('chat.pending_tools.confirm', pending.id), {
+                method: 'POST',
+                credentials: 'same-origin',
+                headers: {
+                    'Content-Type': 'application/json',
+                    Accept: 'application/json',
+                    'X-CSRF-TOKEN': csrfToken,
+                },
+                body: JSON.stringify({}),
+            });
+            const data: unknown = await response.json().catch(() => null);
+            if (!response.ok) {
+                const message =
+                    typeof data === 'object' &&
+                    data !== null &&
+                    'message' in data &&
+                    typeof (data as { message: unknown }).message === 'string'
+                        ? (data as { message: string }).message
+                        : 'Could not apply changes. Please try again.';
+                setSendError(message);
+                return;
+            }
+            if (typeof data === 'object' && data !== null && 'content' in data && typeof (data as any).content === 'string') {
+                const content = ((data as any).content as string).trim();
+                if (content) {
+                    setMessages((prev) => [
+                        ...prev,
+                        { id: createClientId(), role: 'assistant', content },
+                    ]);
+                }
+            }
+            setPending(null);
+        } catch {
+            setSendError('Network error. Check your connection and try again.');
+        } finally {
+            setIsApplyingPending(false);
+        }
+    }
+
+    async function cancelPending() {
+        if (!pending || isApplyingPending) {
+            return;
+        }
+        setIsApplyingPending(true);
+        setSendError(null);
+        try {
+            await fetch(route('chat.pending_tools.cancel', pending.id), {
+                method: 'DELETE',
+                credentials: 'same-origin',
+                headers: {
+                    Accept: 'application/json',
+                    'X-CSRF-TOKEN': csrfToken,
+                },
+            });
+        } finally {
+            setPending(null);
+            setIsApplyingPending(false);
+        }
+    }
+
     return (
         <AppLayout breadcrumbs={breadcrumbs}>
             <Head title="Chat" />
-            <div className="flex min-h-0 flex-1 flex-col">
+            <div className="flex h-[calc(100dvh-4rem)] min-h-0 w-full max-w-full flex-col overflow-hidden">
+                {needsFinancialOnboarding ? (
+                    <div className="border-sidebar-border/50 shrink-0 border-b px-3 py-3 md:px-4">
+                        <div className="bg-muted/60 mx-auto max-w-3xl rounded-xl border border-border/80 px-3 py-3 md:px-4">
+                            <p className="text-foreground text-sm leading-snug">
+                                <span className="font-medium">First-time setup:</span> chat casually about your income, bills, loans, and cards.
+                                When you’re happy with what you’ve shared, continue below.
+                            </p>
+                            <Button
+                                type="button"
+                                variant="secondary"
+                                size="sm"
+                                className="mt-3 w-full sm:w-auto"
+                                disabled={isCompletingOnboarding}
+                                onClick={() => completeOnboarding()}
+                            >
+                                {isCompletingOnboarding ? (
+                                    <>
+                                        <Loader2 className="size-4 animate-spin" />
+                                        Saving…
+                                    </>
+                                ) : (
+                                    'Done — start budgeting'
+                                )}
+                            </Button>
+                        </div>
+                    </div>
+                ) : null}
+
                 <div
                     ref={listRef}
                     className="min-h-0 flex-1 space-y-3 overflow-y-auto overscroll-y-contain px-3 pt-1 pb-2 md:px-4"
@@ -167,7 +286,7 @@ export default function Chat() {
                         >
                             <div
                                 className={cn(
-                                    'max-w-[min(100%,28rem)] rounded-2xl px-3 py-2.5 text-[15px] leading-snug md:text-sm',
+                                    'max-w-[min(100%,28rem)] rounded-2xl px-3 py-2.5 text-[15px] leading-snug whitespace-pre-wrap md:text-sm',
                                     m.role === 'assistant'
                                         ? 'bg-muted text-foreground'
                                         : 'bg-primary text-primary-foreground',
@@ -184,6 +303,38 @@ export default function Chat() {
                         <Alert variant="destructive">
                             <AlertDescription>{sendError}</AlertDescription>
                         </Alert>
+                    </div>
+                ) : null}
+
+                {pending ? (
+                    <div className="shrink-0 px-3 pt-2 md:px-4">
+                        <div className="mx-auto max-w-3xl">
+                            <div className="bg-muted/70 supports-[backdrop-filter]:bg-muted/50 sticky bottom-0 rounded-xl border border-border/80 px-3 py-3 backdrop-blur md:px-4">
+                                <p className="text-sm leading-snug">
+                                    I’m about to save changes to your financial profile. Confirm to apply.
+                                </p>
+                                <div className="mt-3 flex gap-2">
+                                    <Button type="button" onClick={() => void confirmPending()} disabled={isApplyingPending}>
+                                        {isApplyingPending ? (
+                                            <>
+                                                <Loader2 className="size-4 animate-spin" />
+                                                Applying…
+                                            </>
+                                        ) : (
+                                            'Confirm'
+                                        )}
+                                    </Button>
+                                    <Button
+                                        type="button"
+                                        variant="secondary"
+                                        onClick={() => void cancelPending()}
+                                        disabled={isApplyingPending}
+                                    >
+                                        Cancel
+                                    </Button>
+                                </div>
+                            </div>
+                        </div>
                     </div>
                 ) : null}
 
@@ -219,7 +370,7 @@ export default function Chat() {
                             type="submit"
                             size="icon"
                             className="size-11 shrink-0 md:size-10"
-                            disabled={!draft.trim() || isSending}
+                            disabled={!draft.trim() || isSending || !!pending}
                             aria-label="Send message"
                         >
                             {isSending ? <Loader2 className="size-5 animate-spin" /> : <SendHorizontal className="size-5" />}

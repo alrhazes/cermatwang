@@ -2,6 +2,7 @@
 
 namespace Tests\Feature;
 
+use App\Models\IncomeSource;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Http;
@@ -130,5 +131,85 @@ class ChatMessageTest extends TestCase
 
         $response->assertStatus(502);
         $response->assertJsonFragment(['message' => 'Incorrect API key provided: sk-***']);
+    }
+
+    public function test_tool_calls_can_create_financial_rows(): void
+    {
+        Http::fake([
+            'api.openai.com/v1/chat/completions' => Http::sequence()
+                ->push([
+                    'choices' => [
+                        [
+                            'message' => [
+                                'role' => 'assistant',
+                                'content' => '',
+                                'tool_calls' => [
+                                    [
+                                        'id' => 'call_1',
+                                        'type' => 'function',
+                                        'function' => [
+                                            'name' => 'upsert_income_source',
+                                            'arguments' => json_encode([
+                                                'name' => 'Salary',
+                                                'currency' => 'MYR',
+                                                'amount_cents' => 5000_00,
+                                                'cadence' => 'monthly',
+                                            ]),
+                                        ],
+                                    ],
+                                ],
+                            ],
+                        ],
+                    ],
+                ], 200)
+                ->push([
+                    'choices' => [
+                        [
+                            'message' => [
+                                'role' => 'assistant',
+                                'content' => 'Noted — I’ve saved Salary at MYR 5000/month.',
+                            ],
+                        ],
+                    ],
+                ], 200),
+        ]);
+
+        config([
+            'services.openai.api_key' => 'test-key',
+            'services.openai.base_url' => 'https://api.openai.com/v1',
+            'services.openai.model' => 'gpt-4o-mini',
+        ]);
+
+        $user = User::factory()->create();
+
+        $response = $this->actingAs($user)->postJson('/chat/messages', [
+            'messages' => [
+                ['role' => 'user', 'content' => 'My salary is RM5000.'],
+            ],
+        ])->assertOk();
+
+        $response->assertJsonStructure([
+            'content',
+            'pending' => ['id', 'tool_calls'],
+        ]);
+
+        $pendingId = $response->json('pending.id');
+
+        $this->assertSame(0, IncomeSource::where('user_id', $user->id)->count());
+
+        $this->actingAs($user)->postJson("/chat/pending-tool-calls/{$pendingId}/confirm")
+            ->assertOk()
+            ->assertJsonFragment([
+                'content' => 'Noted — I’ve saved Salary at MYR 5000/month.',
+            ]);
+
+        $this->assertDatabaseHas('income_sources', [
+            'user_id' => $user->id,
+            'name' => 'Salary',
+            'currency' => 'MYR',
+            'amount_cents' => 5000_00,
+        ]);
+
+        $this->assertSame(1, IncomeSource::where('user_id', $user->id)->count());
     }
 }

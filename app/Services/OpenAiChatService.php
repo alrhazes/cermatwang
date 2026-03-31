@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use App\Exceptions\OpenAiCompletionFailedException;
+use Illuminate\Http\Client\ConnectionException;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 use RuntimeException;
@@ -17,6 +18,23 @@ class OpenAiChatService
      * @throws OpenAiCompletionFailedException
      */
     public function complete(array $messages): string
+    {
+        $result = $this->respond($messages);
+
+        return $result['content'];
+    }
+
+    /**
+     * Send chat messages to OpenAI and return message content and tool calls.
+     *
+     * @param  array<int, array<string, mixed>>  $messages
+     * @param  array<int, array<string, mixed>>  $tools
+     * @return array{content: string, tool_calls: array<int, array<string, mixed>>}
+     *
+     * @throws OpenAiCompletionFailedException
+     * @throws ConnectionException
+     */
+    public function respond(array $messages, array $tools = []): array
     {
         $apiKey = config('services.openai.api_key');
         if (! is_string($apiKey) || $apiKey === '') {
@@ -33,6 +51,11 @@ class OpenAiChatService
             'max_tokens' => (int) config('services.openai.max_tokens', 1024),
             'temperature' => (float) config('services.openai.temperature', 0.7),
         ];
+
+        if ($tools !== []) {
+            $payload['tools'] = $tools;
+            $payload['tool_choice'] = 'auto';
+        }
 
         $response = Http::withToken($apiKey)
             ->acceptJson()
@@ -58,7 +81,11 @@ class OpenAiChatService
         }
 
         $content = $response->json('choices.0.message.content');
+        $toolCalls = $response->json('choices.0.message.tool_calls');
 
-        return is_string($content) ? trim($content) : '';
+        return [
+            'content' => is_string($content) ? trim($content) : '',
+            'tool_calls' => is_array($toolCalls) ? $toolCalls : [],
+        ];
     }
 }
