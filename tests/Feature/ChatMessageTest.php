@@ -2,6 +2,7 @@
 
 namespace Tests\Feature;
 
+use App\Models\Commitment;
 use App\Models\IncomeSource;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -211,5 +212,137 @@ class ChatMessageTest extends TestCase
         ]);
 
         $this->assertSame(1, IncomeSource::where('user_id', $user->id)->count());
+    }
+
+    public function test_tool_calls_can_create_commitments_with_category_and_due_day(): void
+    {
+        Http::fake([
+            'api.openai.com/v1/chat/completions' => Http::sequence()
+                ->push([
+                    'choices' => [
+                        [
+                            'message' => [
+                                'role' => 'assistant',
+                                'content' => '',
+                                'tool_calls' => [
+                                    [
+                                        'id' => 'call_1',
+                                        'type' => 'function',
+                                        'function' => [
+                                            'name' => 'upsert_commitment',
+                                            'arguments' => json_encode([
+                                                'name' => 'Rent',
+                                                'category' => 'Housing',
+                                                'currency' => 'MYR',
+                                                'amount_cents' => 1500_00,
+                                                'due_day' => 1,
+                                                'cadence' => 'monthly',
+                                            ]),
+                                        ],
+                                    ],
+                                ],
+                            ],
+                        ],
+                    ],
+                ], 200)
+                ->push([
+                    'choices' => [
+                        [
+                            'message' => [
+                                'role' => 'assistant',
+                                'content' => 'Noted — I’ll save Rent under Housing, due day 1.',
+                            ],
+                        ],
+                    ],
+                ], 200),
+        ]);
+
+        config([
+            'services.openai.api_key' => 'test-key',
+            'services.openai.base_url' => 'https://api.openai.com/v1',
+            'services.openai.model' => 'gpt-4o-mini',
+        ]);
+
+        $user = User::factory()->create();
+
+        $response = $this->actingAs($user)->postJson('/chat/messages', [
+            'messages' => [
+                ['role' => 'user', 'content' => 'My rent is RM1500.'],
+            ],
+        ])->assertOk();
+
+        $pendingId = $response->json('pending.id');
+
+        $this->assertSame(0, Commitment::where('user_id', $user->id)->count());
+
+        $this->actingAs($user)->postJson("/chat/pending-tool-calls/{$pendingId}/confirm")
+            ->assertOk();
+
+        $row = Commitment::query()->where('user_id', $user->id)->where('name', 'Rent')->firstOrFail();
+        $this->assertSame('Housing', $row->category);
+        $this->assertSame(1, $row->due_day);
+        $this->assertSame(1500_00, $row->amount_cents);
+    }
+
+    public function test_upsert_commitment_rejects_invalid_due_day(): void
+    {
+        Http::fake([
+            'api.openai.com/v1/chat/completions' => Http::sequence()
+                ->push([
+                    'choices' => [
+                        [
+                            'message' => [
+                                'role' => 'assistant',
+                                'content' => '',
+                                'tool_calls' => [
+                                    [
+                                        'id' => 'call_1',
+                                        'type' => 'function',
+                                        'function' => [
+                                            'name' => 'upsert_commitment',
+                                            'arguments' => json_encode([
+                                                'name' => 'Internet',
+                                                'amount_cents' => 129_00,
+                                                'due_day' => 0,
+                                            ]),
+                                        ],
+                                    ],
+                                ],
+                            ],
+                        ],
+                    ],
+                ], 200)
+                ->push([
+                    'choices' => [
+                        [
+                            'message' => [
+                                'role' => 'assistant',
+                                'content' => 'Got it — I couldn’t save that due day. What day of the month is it normally due (1–31)?',
+                            ],
+                        ],
+                    ],
+                ], 200),
+        ]);
+
+        config([
+            'services.openai.api_key' => 'test-key',
+            'services.openai.base_url' => 'https://api.openai.com/v1',
+            'services.openai.model' => 'gpt-4o-mini',
+        ]);
+
+        $user = User::factory()->create();
+
+        $response = $this->actingAs($user)->postJson('/chat/messages', [
+            'messages' => [
+                ['role' => 'user', 'content' => 'Internet RM129.'],
+            ],
+        ])->assertOk();
+
+        $pendingId = $response->json('pending.id');
+
+        $this->actingAs($user)->postJson("/chat/pending-tool-calls/{$pendingId}/confirm")
+            ->assertOk();
+
+        $this->assertSame(0, Commitment::where('user_id', $user->id)->count());
     }
 }

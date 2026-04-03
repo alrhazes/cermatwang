@@ -27,6 +27,52 @@ interface PendingToolCall {
     tool_calls: unknown[];
 }
 
+function summarizePendingToolCalls(toolCalls: unknown[]): string[] {
+    const lines: string[] = [];
+
+    for (const call of toolCalls) {
+        if (typeof call !== 'object' || call === null) {
+            continue;
+        }
+
+        const fn = (call as any).function;
+        const fnName = fn?.name;
+        const rawArgs = fn?.arguments;
+
+        if (typeof fnName !== 'string' || typeof rawArgs !== 'string') {
+            continue;
+        }
+
+        let args: any = null;
+        try {
+            args = JSON.parse(rawArgs);
+        } catch {
+            args = null;
+        }
+
+        if (!args || typeof args !== 'object') {
+            continue;
+        }
+
+        if (fnName === 'upsert_commitment') {
+            const name = typeof args.name === 'string' ? args.name : 'Commitment';
+            const amountCents = typeof args.amount_cents === 'number' ? args.amount_cents : null;
+            const category = typeof args.category === 'string' ? args.category : null;
+            const dueDay = typeof args.due_day === 'number' ? args.due_day : null;
+            const currency = typeof args.currency === 'string' ? args.currency : 'MYR';
+
+            const amount =
+                typeof amountCents === 'number' && Number.isFinite(amountCents) ? `${currency} ${(amountCents / 100).toFixed(2)}` : null;
+
+            const extras = [category ? `Category: ${category}` : null, dueDay ? `Due: ${dueDay}` : null].filter(Boolean).join(' · ');
+
+            lines.push(`• ${name}${amount ? ` — ${amount}` : ''}${extras ? ` (${extras})` : ''}`);
+        }
+    }
+
+    return lines;
+}
+
 export default function Chat() {
     const { csrfToken, needsFinancialOnboarding, chatWelcome } = usePage<ChatPageProps>().props;
     const formId = useId();
@@ -313,6 +359,20 @@ export default function Chat() {
                                 <p className="text-sm leading-snug">
                                     I’m about to save changes to your financial profile. Confirm to apply.
                                 </p>
+                                {(() => {
+                                    const summary = summarizePendingToolCalls(pending.tool_calls);
+                                    if (summary.length === 0) {
+                                        return null;
+                                    }
+
+                                    return (
+                                        <div className="text-muted-foreground mt-2 space-y-1 text-xs leading-snug">
+                                            {summary.map((line) => (
+                                                <div key={line}>{line}</div>
+                                            ))}
+                                        </div>
+                                    );
+                                })()}
                                 <div className="mt-3 flex gap-2">
                                     <Button type="button" onClick={() => void confirmPending()} disabled={isApplyingPending}>
                                         {isApplyingPending ? (

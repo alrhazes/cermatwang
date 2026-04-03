@@ -80,10 +80,8 @@ class ChatToolRunner
     private function upsertCommitment(User $user, array $args): array
     {
         $name = $this->requireString($args, 'name');
-        $category = $this->optionalString($args, 'category');
         $currency = $this->optionalCurrency($args, 'currency') ?? 'MYR';
         $amountCents = $this->requireInt($args, 'amount_cents');
-        $dueDay = $this->optionalInt($args, 'due_day');
         $cadence = $this->optionalString($args, 'cadence') ?? 'monthly';
         $isActive = $this->optionalBool($args, 'is_active') ?? true;
 
@@ -92,14 +90,23 @@ class ChatToolRunner
             'name' => $name,
         ]);
 
-        $row->fill([
-            'category' => $category,
+        /** @var array<string, mixed> $attributes */
+        $attributes = [
             'currency' => $currency,
             'amount_cents' => max(0, $amountCents),
-            'due_day' => $dueDay,
             'cadence' => $cadence,
             'is_active' => $isActive,
-        ])->save();
+        ];
+
+        if (Arr::exists($args, 'category')) {
+            $attributes['category'] = $this->optionalString($args, 'category');
+        }
+
+        if (Arr::exists($args, 'due_day')) {
+            $attributes['due_day'] = $this->optionalDayOfMonth($args, 'due_day');
+        }
+
+        $row->fill($attributes)->save();
 
         return ['ok' => true, 'commitment_id' => $row->id];
     }
@@ -273,6 +280,21 @@ class ChatToolRunner
         $value = strtoupper($value);
 
         if (strlen($value) !== 3) {
+            throw new InvalidArgumentException("Invalid {$key}.");
+        }
+
+        return $value;
+    }
+
+    /** @param array<string, mixed> $args */
+    private function optionalDayOfMonth(array $args, string $key): ?int
+    {
+        $value = $this->optionalInt($args, $key);
+        if ($value === null) {
+            return null;
+        }
+
+        if ($value < 1 || $value > 31) {
             throw new InvalidArgumentException("Invalid {$key}.");
         }
 

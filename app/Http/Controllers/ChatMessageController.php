@@ -150,7 +150,7 @@ class ChatMessageController extends Controller
                             'category' => ['type' => 'string'],
                             'currency' => ['type' => 'string'],
                             'amount_cents' => ['type' => 'integer'],
-                            'due_day' => ['type' => 'integer', 'description' => '1-28 if known'],
+                            'due_day' => ['type' => 'integer', 'description' => '1-31 if known'],
                             'cadence' => ['type' => 'string'],
                             'is_active' => ['type' => 'boolean'],
                         ],

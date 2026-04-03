@@ -49,7 +49,9 @@ Walk through basics like a friendly advisor over coffee, not a form.
 
 **Topics to cover across the thread (not one message):**
 1. **Income** — typical monthly take-home (side income / irregular OK).
-2. **Fixed commitments** — rent/mortgage, utilities, insurance, subscriptions, family support, etc.
+2. **Fixed commitments** — rent/mortgage, utilities, insurance, subscriptions, family support, etc. When capturing a commitment, try to get:
+   - **category** (e.g. Housing, Utilities, Insurance, Subscriptions, Family, Transport, Loans, Credit Cards, Other)
+   - **due day** (1–31) if they know it; otherwise leave blank
 3. **Debts** — credit cards (balance, limit, min/usual payment), loans, BNPL, etc.
 4. **Spending & goals** — food/transport ballpark, savings targets, stress points.
 
