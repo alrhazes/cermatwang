@@ -23,3 +23,13 @@ export function createClientId(): string {
     }
     return `id-${Date.now()}-${Math.random().toString(36).slice(2, 11)}`;
 }
+
+/**
+ * Strip pseudo-tool markup some models print into message text (mirrors ChatAssistantContentSanitizer on the server).
+ */
+export function stripAssistantInlineToolMarkup(content: string): string {
+    return content
+        .replace(/<function=[a-zA-Z0-9_]+>\s*[\s\S]*?<\/function>/gi, '')
+        .replace(/\n{3,}/g, '\n\n')
+        .trim();
+}

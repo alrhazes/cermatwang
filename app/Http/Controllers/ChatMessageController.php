@@ -61,7 +61,10 @@ class ChatMessageController extends Controller
 
             $content = $result['content'];
 
-            if ($result['tool_calls'] !== []) {
+            $rawToolCalls = is_array($result['tool_calls'] ?? null) ? $result['tool_calls'] : [];
+            $dbToolCalls = ChatToolRunner::filterDatabaseMutationToolCalls($rawToolCalls);
+
+            if ($dbToolCalls !== []) {
                 $pendingId = (string) str()->uuid();
                 Cache::put(
                     "chat:pending:{$pendingId}",
@@ -69,7 +72,7 @@ class ChatMessageController extends Controller
                         'user_id' => $request->user()->id,
                         'base_messages' => $messages,
                         'assistant_content' => $content,
-                        'tool_calls' => $result['tool_calls'],
+                        'tool_calls' => $dbToolCalls,
                     ],
                     now()->addMinutes(15)
                 );
@@ -78,8 +81,14 @@ class ChatMessageController extends Controller
                     'content' => $content !== '' ? $content : 'I can save a few details to your profile. Please confirm before I apply them.',
                     'pending' => [
                         'id' => $pendingId,
-                        'tool_calls' => $result['tool_calls'],
+                        'tool_calls' => $dbToolCalls,
                     ],
+                ]);
+            }
+
+            if ($rawToolCalls !== []) {
+                Log::warning('Chat completions returned tool_calls with no recognized database mutation tools', [
+                    'user_id' => $request->user()->id,
                 ]);
             }
         } catch (AssistantNotConfiguredException $e) {

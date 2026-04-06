@@ -12,6 +12,46 @@ use InvalidArgumentException;
 class ChatToolRunner
 {
     /**
+     * Tool names that persist changes to the database (these require user confirmation before running).
+     *
+     * @return list<string>
+     */
+    public static function databaseMutationToolNames(): array
+    {
+        return [
+            'upsert_income_source',
+            'upsert_commitment',
+            'upsert_debt',
+            'delete_income_source',
+            'delete_commitment',
+            'delete_debt',
+        ];
+    }
+
+    /**
+     * @param  array<int, mixed>  $toolCalls
+     * @return array<int, array<string, mixed>>
+     */
+    public static function filterDatabaseMutationToolCalls(array $toolCalls): array
+    {
+        $allowed = array_flip(self::databaseMutationToolNames());
+        $out = [];
+
+        foreach ($toolCalls as $call) {
+            if (! is_array($call)) {
+                continue;
+            }
+
+            $name = data_get($call, 'function.name');
+            if (is_string($name) && isset($allowed[$name])) {
+                $out[] = $call;
+            }
+        }
+
+        return $out;
+    }
+
+    /**
      * Execute an OpenAI tool call against the current user.
      *
      * @param  array<string, mixed>  $toolCall

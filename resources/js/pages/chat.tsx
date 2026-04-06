@@ -1,7 +1,7 @@
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import AppLayout from '@/layouts/app-layout';
-import { cn, createClientId } from '@/lib/utils';
+import { cn, createClientId, stripAssistantInlineToolMarkup } from '@/lib/utils';
 import { type BreadcrumbItem, type ChatPageProps } from '@/types';
 import { Head, router, usePage } from '@inertiajs/react';
 import { Loader2, SendHorizontal } from 'lucide-react';
@@ -26,6 +26,10 @@ interface PendingToolCall {
     id: string;
     tool_calls: unknown[];
 }
+
+/** Matches server fallback when the model returns tool calls with no message text. */
+const PENDING_PLACEHOLDER_ASSISTANT_TEXT =
+    'I can save a few details to your profile. Please confirm before I apply them.';
 
 function summarizePendingToolCalls(toolCalls: unknown[]): string[] {
     const lines: string[] = [];
@@ -250,12 +254,30 @@ export default function Chat() {
             }
             if (typeof data === 'object' && data !== null && 'content' in data && typeof (data as any).content === 'string') {
                 const content = ((data as any).content as string).trim();
-                if (content) {
-                    setMessages((prev) => [
-                        ...prev,
-                        { id: createClientId(), role: 'assistant', content },
-                    ]);
-                }
+                setMessages((prev) => {
+                    const placeholderIdx = prev.findLastIndex(
+                        (m) => m.role === 'assistant' && m.content.trim() === PENDING_PLACEHOLDER_ASSISTANT_TEXT,
+                    );
+
+                    if (placeholderIdx !== -1) {
+                        const next = [...prev];
+                        if (content) {
+                            next[placeholderIdx] = {
+                                ...next[placeholderIdx],
+                                content,
+                            };
+                            return next;
+                        }
+                        next.splice(placeholderIdx, 1);
+                        return next;
+                    }
+
+                    if (content) {
+                        return [...prev, { id: createClientId(), role: 'assistant', content }];
+                    }
+
+                    return prev;
+                });
             }
             setPending(null);
         } catch {
@@ -338,7 +360,7 @@ export default function Chat() {
                                         : 'bg-primary text-primary-foreground',
                                 )}
                             >
-                                {m.content}
+                                {m.role === 'assistant' ? stripAssistantInlineToolMarkup(m.content) : m.content}
                             </div>
                         </div>
                     ))}

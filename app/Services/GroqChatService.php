@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use App\Exceptions\OpenAiCompletionFailedException;
+use App\Support\ChatAssistantContentSanitizer;
 use Illuminate\Http\Client\ConnectionException;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
@@ -70,7 +71,7 @@ class GroqChatService
         $toolCalls = $response->json('choices.0.message.tool_calls');
 
         return [
-            'content' => is_string($content) ? trim($content) : '',
+            'content' => ChatAssistantContentSanitizer::stripInlineToolMarkup(is_string($content) ? trim($content) : ''),
             'tool_calls' => is_array($toolCalls) ? $toolCalls : [],
         ];
     }
