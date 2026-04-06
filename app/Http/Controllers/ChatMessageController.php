@@ -2,10 +2,11 @@
 
 namespace App\Http\Controllers;
 
+use App\Exceptions\AssistantNotConfiguredException;
 use App\Exceptions\OpenAiCompletionFailedException;
 use App\Http\Requests\SendChatMessageRequest;
 use App\Services\ChatToolRunner;
-use App\Services\OpenAiChatService;
+use App\Services\UserChatCompletionService;
 use App\Support\AdvisorPersona;
 use App\Support\FinancialOnboarding;
 use App\Support\FinancialProfileContext;
@@ -22,7 +23,7 @@ class ChatMessageController extends Controller
     /**
      * Return the next assistant message for the given conversation history.
      */
-    public function __invoke(SendChatMessageRequest $request, OpenAiChatService $openAiChat, ChatToolRunner $toolRunner): JsonResponse
+    public function __invoke(SendChatMessageRequest $request, UserChatCompletionService $chatCompletion, ChatToolRunner $toolRunner): JsonResponse
     {
         $validated = $request->validated();
 
@@ -56,7 +57,7 @@ class ChatMessageController extends Controller
 
         try {
             $tools = $this->toolDefinitions();
-            $result = $openAiChat->respond($messages, $tools);
+            $result = $chatCompletion->respond($request->user(), $messages, $tools);
 
             $content = $result['content'];
 
@@ -81,13 +82,17 @@ class ChatMessageController extends Controller
                     ],
                 ]);
             }
+        } catch (AssistantNotConfiguredException $e) {
+            return response()->json([
+                'message' => $e->getMessage(),
+            ], 503);
         } catch (RuntimeException) {
             return response()->json([
                 'message' => 'The assistant is not configured. Add OPENAI_API_KEY to your environment.',
             ], 503);
         } catch (ConnectionException) {
             return response()->json([
-                'message' => 'Could not reach OpenAI. Check your connection and try again.',
+                'message' => 'Could not reach the assistant provider. Check your connection and try again.',
             ], 503);
         } catch (OpenAiCompletionFailedException $e) {
             return response()->json([

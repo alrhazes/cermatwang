@@ -25,6 +25,8 @@ class User extends Authenticatable
         'password',
         'onboarding_completed_at',
         'financial_profile',
+        'ai_chat_provider',
+        'ai_chat_model',
     ];
 
     /**

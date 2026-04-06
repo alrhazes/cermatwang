@@ -42,5 +42,7 @@ export interface User {
     email_verified_at: string | null;
     created_at: string;
     updated_at: string;
+    ai_chat_provider?: string | null;
+    ai_chat_model?: string | null;
     [key: string]: unknown; // This allows for additional properties...
 }

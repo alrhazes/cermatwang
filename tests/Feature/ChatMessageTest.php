@@ -345,4 +345,69 @@ class ChatMessageTest extends TestCase
 
         $this->assertSame(0, Commitment::where('user_id', $user->id)->count());
     }
+
+    public function test_uses_groq_when_user_prefers_groq(): void
+    {
+        Http::fake([
+            'https://api.groq.com/*' => Http::response([
+                'choices' => [
+                    [
+                        'message' => [
+                            'role' => 'assistant',
+                            'content' => 'Hello from Groq.',
+                        ],
+                    ],
+                ],
+            ], 200),
+        ]);
+
+        config([
+            'services.groq.api_key' => 'test-groq-key',
+            'services.groq.base_url' => 'https://api.groq.com/openai/v1',
+            'services.groq.model' => 'llama-test',
+            'services.openai.api_key' => 'openai-should-not-be-called',
+        ]);
+
+        $user = User::factory()->create([
+            'ai_chat_provider' => 'groq',
+        ]);
+
+        $response = $this->actingAs($user)->postJson('/chat/messages', [
+            'messages' => [
+                ['role' => 'user', 'content' => 'Hi'],
+            ],
+        ]);
+
+        $response->assertOk();
+        $response->assertJson(['content' => 'Hello from Groq.']);
+
+        Http::assertSent(function ($request) {
+            return str_contains($request->url(), 'api.groq.com');
+        });
+    }
+
+    public function test_returns_503_when_groq_api_key_missing(): void
+    {
+        Http::fake();
+
+        config([
+            'services.groq.api_key' => '',
+            'services.groq.base_url' => 'https://api.groq.com/openai/v1',
+        ]);
+
+        $user = User::factory()->create([
+            'ai_chat_provider' => 'groq',
+        ]);
+
+        $response = $this->actingAs($user)->postJson('/chat/messages', [
+            'messages' => [
+                ['role' => 'user', 'content' => 'Hi'],
+            ],
+        ]);
+
+        $response->assertStatus(503);
+        $response->assertJsonFragment(['message' => 'The assistant is not configured. Add GROQ_API_KEY to your environment.']);
+
+        Http::assertNothingSent();
+    }
 }

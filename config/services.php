@@ -44,4 +44,12 @@ return [
         'system_prompt' => env('OPENAI_SYSTEM_PROMPT'),
     ],
 
+    'groq' => [
+        'api_key' => ($k = env('GROQ_API_KEY')) ? trim((string) $k) : null,
+        'base_url' => env('GROQ_BASE_URL', 'https://api.groq.com/openai/v1'),
+        'model' => env('GROQ_MODEL', 'llama-3.3-70b-versatile'),
+        'max_tokens' => env('GROQ_MAX_TOKENS', 1024),
+        'temperature' => env('GROQ_TEMPERATURE', 0.7),
+    ],
+
 ];

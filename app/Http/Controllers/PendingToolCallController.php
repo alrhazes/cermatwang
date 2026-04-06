@@ -2,8 +2,10 @@
 
 namespace App\Http\Controllers;
 
+use App\Exceptions\AssistantNotConfiguredException;
+use App\Exceptions\OpenAiCompletionFailedException;
 use App\Services\ChatToolRunner;
-use App\Services\OpenAiChatService;
+use App\Services\UserChatCompletionService;
 use Illuminate\Http\Client\ConnectionException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -18,7 +20,7 @@ class PendingToolCallController extends Controller
         Request $request,
         string $pendingId,
         ChatToolRunner $toolRunner,
-        OpenAiChatService $openAiChat,
+        UserChatCompletionService $chatCompletion,
     ): JsonResponse {
         $cacheKey = "chat:pending:{$pendingId}";
         $pending = Cache::get($cacheKey);
@@ -58,7 +60,7 @@ class PendingToolCallController extends Controller
         }
 
         try {
-            $followUp = $openAiChat->respond(array_merge($baseMessages, [
+            $followUp = $chatCompletion->respond($request->user(), array_merge($baseMessages, [
                 [
                     'role' => 'assistant',
                     'content' => is_string($assistantContent) ? $assistantContent : '',
@@ -66,10 +68,14 @@ class PendingToolCallController extends Controller
                 ],
                 ...$toolMessages,
             ]));
+        } catch (AssistantNotConfiguredException $e) {
+            return response()->json(['message' => $e->getMessage()], 503);
         } catch (RuntimeException) {
             return response()->json(['message' => 'The assistant is not configured.'], 503);
         } catch (ConnectionException) {
-            return response()->json(['message' => 'Could not reach OpenAI.'], 503);
+            return response()->json(['message' => 'Could not reach the assistant provider.'], 503);
+        } catch (OpenAiCompletionFailedException $e) {
+            return response()->json(['message' => $e->getMessage()], 502);
         } catch (Throwable) {
             return response()->json(['message' => 'Something went wrong.'], 500);
         }
