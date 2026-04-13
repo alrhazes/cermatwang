@@ -29,9 +29,41 @@ export interface SharedData {
     [key: string]: unknown;
 }
 
+export interface BudgetOverviewRow {
+    category: string;
+    budget_cents: number;
+    fixed_commitments_cents: number | null;
+    previous_budget_cents: number | null;
+    spent_cents: number;
+    remaining_cents: number;
+    percent_used: number | null;
+    currency: string;
+    notes: string | null;
+}
+
+export interface BudgetOverviewProps {
+    year_month: string;
+    label: string;
+    today_label: string;
+    rows: BudgetOverviewRow[];
+    spend_outside_budget_slots: Array<{ category: string; spent_cents: number; currency: string }>;
+    totals: {
+        budget_cents: number;
+        fixed_commitments_cents: number;
+        monthly_income_cents: number;
+        health_percent: number | null;
+        spent_cents: number;
+        remaining_vs_budget_cents: number;
+        spent_percent_of_planned: number | null;
+        today_spent_cents: number;
+    };
+    canned_prompts: Array<{ label: string; text: string }>;
+}
+
 export interface ChatPageProps extends SharedData {
     needsFinancialOnboarding: boolean;
     chatWelcome: string;
+    budgetOverview: BudgetOverviewProps;
 }
 
 export interface User {

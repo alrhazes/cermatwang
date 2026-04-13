@@ -410,4 +410,201 @@ class ChatMessageTest extends TestCase
 
         Http::assertNothingSent();
     }
+
+    public function test_tool_calls_can_upsert_monthly_budget_allocation(): void
+    {
+        $yearMonth = now()->format('Y-m');
+
+        Http::fake([
+            'api.openai.com/v1/chat/completions' => Http::sequence()
+                ->push([
+                    'choices' => [
+                        [
+                            'message' => [
+                                'role' => 'assistant',
+                                'content' => '',
+                                'tool_calls' => [
+                                    [
+                                        'id' => 'call_budget_1',
+                                        'type' => 'function',
+                                        'function' => [
+                                            'name' => 'upsert_monthly_budget_allocation',
+                                            'arguments' => json_encode([
+                                                'year_month' => $yearMonth,
+                                                'category' => 'Food',
+                                                'currency' => 'MYR',
+                                                'amount_cents' => 800_00,
+                                            ]),
+                                        ],
+                                    ],
+                                ],
+                            ],
+                        ],
+                    ],
+                ], 200)
+                ->push([
+                    'choices' => [
+                        [
+                            'message' => [
+                                'role' => 'assistant',
+                                'content' => 'I’ve queued a Food budget for this month.',
+                            ],
+                        ],
+                    ],
+                ], 200),
+        ]);
+
+        config([
+            'services.openai.api_key' => 'test-key',
+            'services.openai.base_url' => 'https://api.openai.com/v1',
+            'services.openai.model' => 'gpt-4o-mini',
+        ]);
+
+        $user = User::factory()->create();
+
+        $response = $this->actingAs($user)->postJson('/chat/messages', [
+            'messages' => [
+                ['role' => 'user', 'content' => 'Set my Food budget to RM800 this month.'],
+            ],
+        ])->assertOk();
+
+        $pendingId = $response->json('pending.id');
+
+        $this->assertDatabaseMissing('monthly_budget_allocations', [
+            'user_id' => $user->id,
+            'year_month' => $yearMonth,
+            'category' => 'Food',
+        ]);
+
+        $this->actingAs($user)->postJson("/chat/pending-tool-calls/{$pendingId}/confirm")
+            ->assertOk()
+            ->assertJsonFragment([
+                'content' => 'I’ve queued a Food budget for this month.',
+            ]);
+
+        $this->assertDatabaseHas('monthly_budget_allocations', [
+            'user_id' => $user->id,
+            'year_month' => $yearMonth,
+            'category' => 'Food',
+            'amount_cents' => 800_00,
+            'currency' => 'MYR',
+        ]);
+    }
+
+    public function test_tool_calls_can_log_expense(): void
+    {
+        $yearMonth = now()->format('Y-m');
+
+        Http::fake([
+            'api.openai.com/v1/chat/completions' => Http::sequence()
+                ->push([
+                    'choices' => [
+                        [
+                            'message' => [
+                                'role' => 'assistant',
+                                'content' => '',
+                                'tool_calls' => [
+                                    [
+                                        'id' => 'call_exp_1',
+                                        'type' => 'function',
+                                        'function' => [
+                                            'name' => 'log_expense',
+                                            'arguments' => json_encode([
+                                                'category' => 'Food',
+                                                'currency' => 'MYR',
+                                                'amount_cents' => 45_00,
+                                                'place_label' => 'SS2 kopitiam',
+                                            ]),
+                                        ],
+                                    ],
+                                ],
+                            ],
+                        ],
+                    ],
+                ], 200)
+                ->push([
+                    'choices' => [
+                        [
+                            'message' => [
+                                'role' => 'assistant',
+                                'content' => 'Logged that lunch spend.',
+                            ],
+                        ],
+                    ],
+                ], 200),
+        ]);
+
+        config([
+            'services.openai.api_key' => 'test-key',
+            'services.openai.base_url' => 'https://api.openai.com/v1',
+            'services.openai.model' => 'gpt-4o-mini',
+        ]);
+
+        $user = User::factory()->create();
+
+        $response = $this->actingAs($user)->postJson('/chat/messages', [
+            'messages' => [
+                ['role' => 'user', 'content' => 'RM45 lunch at SS2 kopitiam'],
+            ],
+        ])->assertOk();
+
+        $pendingId = $response->json('pending.id');
+
+        $this->assertDatabaseMissing('expense_entries', [
+            'user_id' => $user->id,
+            'category' => 'Food',
+        ]);
+
+        $this->actingAs($user)->postJson("/chat/pending-tool-calls/{$pendingId}/confirm")
+            ->assertOk()
+            ->assertJsonFragment([
+                'content' => 'Logged that lunch spend.',
+            ]);
+
+        $this->assertDatabaseHas('expense_entries', [
+            'user_id' => $user->id,
+            'year_month' => $yearMonth,
+            'category' => 'Food',
+            'amount_cents' => 45_00,
+            'currency' => 'MYR',
+            'place_label' => 'SS2 kopitiam',
+        ]);
+    }
+
+    public function test_accepts_optional_client_context_location(): void
+    {
+        Http::fake([
+            'api.openai.com/v1/chat/completions' => Http::response([
+                'choices' => [
+                    [
+                        'message' => [
+                            'role' => 'assistant',
+                            'content' => 'Noted.',
+                        ],
+                    ],
+                ],
+            ], 200),
+        ]);
+
+        config([
+            'services.openai.api_key' => 'test-key',
+            'services.openai.base_url' => 'https://api.openai.com/v1',
+            'services.openai.model' => 'gpt-4o-mini',
+        ]);
+
+        $user = User::factory()->create();
+
+        $this->actingAs($user)->postJson('/chat/messages', [
+            'messages' => [
+                ['role' => 'user', 'content' => 'Test'],
+            ],
+            'client_context' => [
+                'location' => [
+                    'latitude' => 3.139,
+                    'longitude' => 101.6869,
+                    'accuracy' => 25,
+                ],
+            ],
+        ])->assertOk();
+    }
 }

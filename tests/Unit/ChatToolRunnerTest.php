@@ -27,6 +27,10 @@ class ChatToolRunnerTest extends TestCase
 
         $this->assertContains('upsert_income_source', $names);
         $this->assertContains('delete_debt', $names);
-        $this->assertCount(6, $names);
+        $this->assertContains('upsert_monthly_budget_allocation', $names);
+        $this->assertContains('delete_monthly_budget_allocation', $names);
+        $this->assertContains('log_expense', $names);
+        $this->assertContains('delete_expense', $names);
+        $this->assertCount(10, $names);
     }
 }

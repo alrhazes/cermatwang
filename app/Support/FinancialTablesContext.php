@@ -45,11 +45,17 @@ final class FinancialTablesContext
             })
             ->all();
 
-        if ($incomeLines === [] && $commitmentLines === [] && $debtLines === []) {
+        $budgetOverview = ChatBudgetOverview::forInertia($user);
+        $hasBudgetRows = $budgetOverview['rows'] !== [];
+        $totals = is_array($budgetOverview['totals'] ?? null) ? $budgetOverview['totals'] : [];
+        $spentCents = is_int($totals['spent_cents'] ?? null) ? $totals['spent_cents'] : 0;
+        $hasExpenseActivity = $spentCents > 0;
+
+        if ($incomeLines === [] && $commitmentLines === [] && $debtLines === [] && ! $hasBudgetRows && ! $hasExpenseActivity) {
             return <<<'TEXT'
 
 ## Structured financial records (app database)
-No income sources, commitments, or debts have been saved yet.
+No income sources, commitments, debts, monthly budget slots, or logged expenses have been saved yet.
 
 TEXT;
         }
@@ -67,6 +73,8 @@ TEXT;
         if ($debtLines !== []) {
             $out .= "\n### Debts / credit\n".implode("\n", $debtLines)."\n";
         }
+
+        $out .= ChatBudgetOverview::toPromptText($budgetOverview);
 
         return $out;
     }

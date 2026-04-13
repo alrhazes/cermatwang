@@ -4,9 +4,12 @@ namespace App\Services;
 
 use App\Models\Commitment;
 use App\Models\Debt;
+use App\Models\ExpenseEntry;
 use App\Models\IncomeSource;
+use App\Models\MonthlyBudgetAllocation;
 use App\Models\User;
 use Illuminate\Support\Arr;
+use Illuminate\Support\Carbon;
 use InvalidArgumentException;
 
 class ChatToolRunner
@@ -25,6 +28,10 @@ class ChatToolRunner
             'delete_income_source',
             'delete_commitment',
             'delete_debt',
+            'upsert_monthly_budget_allocation',
+            'delete_monthly_budget_allocation',
+            'log_expense',
+            'delete_expense',
         ];
     }
 
@@ -82,6 +89,10 @@ class ChatToolRunner
             'delete_income_source' => $this->deleteIncomeSource($user, $args),
             'delete_commitment' => $this->deleteCommitment($user, $args),
             'delete_debt' => $this->deleteDebt($user, $args),
+            'upsert_monthly_budget_allocation' => $this->upsertMonthlyBudgetAllocation($user, $args),
+            'delete_monthly_budget_allocation' => $this->deleteMonthlyBudgetAllocation($user, $args),
+            'log_expense' => $this->logExpense($user, $args),
+            'delete_expense' => $this->deleteExpense($user, $args),
             default => throw new InvalidArgumentException("Unknown tool: {$name}"),
         };
     }
@@ -257,6 +268,227 @@ class ChatToolRunner
         $query->delete();
 
         return ['ok' => true];
+    }
+
+    /**
+     * @param  array<string, mixed>  $args
+     * @return array{ok: bool, monthly_budget_allocation_id: int}
+     */
+    private function upsertMonthlyBudgetAllocation(User $user, array $args): array
+    {
+        $yearMonth = $this->requireYearMonth($args, 'year_month');
+        $category = $this->requireString($args, 'category');
+        $currency = $this->optionalCurrency($args, 'currency') ?? 'MYR';
+        $amountCents = $this->requireInt($args, 'amount_cents');
+        $notes = $this->optionalString($args, 'notes');
+
+        $row = MonthlyBudgetAllocation::firstOrNew([
+            'user_id' => $user->id,
+            'year_month' => $yearMonth,
+            'category' => $category,
+        ]);
+
+        $row->fill([
+            'currency' => $currency,
+            'amount_cents' => max(0, $amountCents),
+            'notes' => $notes,
+        ])->save();
+
+        return ['ok' => true, 'monthly_budget_allocation_id' => $row->id];
+    }
+
+    /**
+     * @param  array<string, mixed>  $args
+     * @return array{ok: bool}
+     */
+    private function deleteMonthlyBudgetAllocation(User $user, array $args): array
+    {
+        $yearMonth = $this->requireYearMonth($args, 'year_month');
+        $category = $this->requireString($args, 'category');
+
+        MonthlyBudgetAllocation::query()
+            ->where('user_id', $user->id)
+            ->where('year_month', $yearMonth)
+            ->where('category', $category)
+            ->delete();
+
+        return ['ok' => true];
+    }
+
+    /**
+     * @param  array<string, mixed>  $args
+     * @return array{ok: bool, expense_entry_id: int}
+     */
+    private function logExpense(User $user, array $args): array
+    {
+        $category = $this->requireString($args, 'category');
+        $currency = $this->optionalCurrency($args, 'currency') ?? 'MYR';
+        $amountCents = $this->requireInt($args, 'amount_cents');
+        if ($amountCents <= 0) {
+            throw new InvalidArgumentException('amount_cents must be positive.');
+        }
+
+        $spentAt = $this->parseOptionalSpentAt($args);
+        $yearMonth = $spentAt->format('Y-m');
+        $placeLabel = $this->optionalString($args, 'place_label');
+        $notes = $this->optionalString($args, 'notes');
+        $lat = $this->optionalLatitude($args, 'latitude');
+        $lng = $this->optionalLongitude($args, 'longitude');
+        $accuracy = $this->optionalNonNegativeInt($args, 'location_accuracy_m');
+
+        if (($lat !== null) !== ($lng !== null)) {
+            throw new InvalidArgumentException('Provide both latitude and longitude, or neither.');
+        }
+
+        $row = ExpenseEntry::query()->create([
+            'user_id' => $user->id,
+            'spent_at' => $spentAt,
+            'year_month' => $yearMonth,
+            'category' => $category,
+            'amount_cents' => $amountCents,
+            'currency' => $currency,
+            'place_label' => $placeLabel,
+            'latitude' => $lat,
+            'longitude' => $lng,
+            'location_accuracy_m' => $accuracy,
+            'notes' => $notes,
+        ]);
+
+        return ['ok' => true, 'expense_entry_id' => $row->id];
+    }
+
+    /**
+     * @param  array<string, mixed>  $args
+     * @return array{ok: bool}
+     */
+    private function deleteExpense(User $user, array $args): array
+    {
+        $id = $this->requireInt($args, 'id');
+        if ($id <= 0) {
+            throw new InvalidArgumentException('Invalid id.');
+        }
+
+        $yearMonth = $this->optionalString($args, 'year_month');
+        if ($yearMonth !== null) {
+            $yearMonth = $this->normalizeYearMonthString($yearMonth);
+        }
+
+        $query = ExpenseEntry::query()->where('user_id', $user->id)->whereKey($id);
+        if ($yearMonth !== null) {
+            $query->where('year_month', $yearMonth);
+        }
+
+        $deleted = $query->delete();
+        if ($deleted === 0) {
+            throw new InvalidArgumentException('Expense not found or year_month did not match.');
+        }
+
+        return ['ok' => true];
+    }
+
+    /**
+     * @param  array<string, mixed>  $args
+     */
+    private function parseOptionalSpentAt(array $args): Carbon
+    {
+        $raw = $this->optionalString($args, 'spent_at');
+        if ($raw === null) {
+            return now(config('app.timezone'));
+        }
+
+        try {
+            return Carbon::parse($raw)->timezone(config('app.timezone'));
+        } catch (\Throwable) {
+            throw new InvalidArgumentException('Invalid spent_at; use an ISO 8601 date or datetime.');
+        }
+    }
+
+    /** @param  array<string, mixed>  $args */
+    private function optionalLatitude(array $args, string $key): ?float
+    {
+        $v = $this->optionalFloat($args, $key);
+        if ($v === null) {
+            return null;
+        }
+        if ($v < -90.0 || $v > 90.0) {
+            throw new InvalidArgumentException("Invalid {$key}.");
+        }
+
+        return $v;
+    }
+
+    /** @param  array<string, mixed>  $args */
+    private function optionalLongitude(array $args, string $key): ?float
+    {
+        $v = $this->optionalFloat($args, $key);
+        if ($v === null) {
+            return null;
+        }
+        if ($v < -180.0 || $v > 180.0) {
+            throw new InvalidArgumentException("Invalid {$key}.");
+        }
+
+        return $v;
+    }
+
+    /** @param  array<string, mixed>  $args */
+    private function optionalFloat(array $args, string $key): ?float
+    {
+        $value = Arr::get($args, $key);
+        if (is_int($value)) {
+            return (float) $value;
+        }
+        if (is_float($value)) {
+            return $value;
+        }
+
+        return null;
+    }
+
+    /**
+     * @param  array<string, mixed>  $args
+     */
+    private function optionalNonNegativeInt(array $args, string $key): ?int
+    {
+        $v = $this->optionalInt($args, $key);
+        if ($v === null) {
+            return null;
+        }
+        if ($v < 0) {
+            throw new InvalidArgumentException("Invalid {$key}.");
+        }
+
+        return $v;
+    }
+
+    private function normalizeYearMonthString(string $value): string
+    {
+        if (! preg_match('/^\d{4}-\d{2}$/', $value)) {
+            throw new InvalidArgumentException('Invalid year_month; use YYYY-MM.');
+        }
+        $parts = explode('-', $value);
+        $m = (int) $parts[1];
+        if ($m < 1 || $m > 12) {
+            throw new InvalidArgumentException('Invalid year_month; month must be 01-12.');
+        }
+
+        return sprintf('%04d-%02d', (int) $parts[0], $m);
+    }
+
+    /** @param array<string, mixed> $args */
+    private function requireYearMonth(array $args, string $key): string
+    {
+        $value = $this->requireString($args, $key);
+        if (! preg_match('/^\\d{4}-\\d{2}$/', $value)) {
+            throw new InvalidArgumentException("Invalid {$key}; use YYYY-MM.");
+        }
+        $parts = explode('-', $value);
+        $m = (int) $parts[1];
+        if ($m < 1 || $m > 12) {
+            throw new InvalidArgumentException("Invalid {$key}; month must be 01-12.");
+        }
+
+        return sprintf('%04d-%02d', (int) $parts[0], $m);
     }
 
     /** @param array<string, mixed> $args */

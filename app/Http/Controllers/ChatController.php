@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use App\Models\Commitment;
+use App\Support\ChatBudgetOverview;
 use App\Support\FinancialOnboarding;
 use Illuminate\Http\Request;
 use Inertia\Inertia;
@@ -48,6 +49,7 @@ class ChatController extends Controller
         return Inertia::render('chat', [
             'needsFinancialOnboarding' => $needsOnboarding,
             'chatWelcome' => $welcome,
+            'budgetOverview' => ChatBudgetOverview::forInertia($user),
         ]);
     }
 

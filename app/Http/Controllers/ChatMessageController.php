@@ -51,6 +51,25 @@ class ChatMessageController extends Controller
             $systemContent .= FinancialOnboarding::systemPromptAddon();
         }
 
+        $location = data_get($validated, 'client_context.location');
+        if (is_array($location)) {
+            $lat = $location['latitude'] ?? null;
+            $lng = $location['longitude'] ?? null;
+            if (is_numeric($lat) && is_numeric($lng)) {
+                $suffix = sprintf(
+                    "\n\nClient attached approximate GPS for this message: latitude %.5f, longitude %.5f",
+                    (float) $lat,
+                    (float) $lng,
+                );
+                $acc = $location['accuracy'] ?? null;
+                if (is_numeric($acc)) {
+                    $suffix .= sprintf(' (accuracy about %.0f m)', (float) $acc);
+                }
+                $suffix .= '. Use only when logging an expense the user is describing in this message.';
+                $systemContent .= $suffix;
+            }
+        }
+
         $messages = array_merge([
             ['role' => 'system', 'content' => $systemContent],
         ], $history);
@@ -238,6 +257,80 @@ class ChatMessageController extends Controller
                             'name' => ['type' => 'string'],
                             'type' => ['type' => 'string'],
                         ],
+                    ],
+                ],
+            ],
+            [
+                'type' => 'function',
+                'function' => [
+                    'name' => 'upsert_monthly_budget_allocation',
+                    'description' => 'Create or update a planned monthly spend cap for a category for a given calendar month (YYYY-MM).',
+                    'parameters' => [
+                        'type' => 'object',
+                        'additionalProperties' => false,
+                        'properties' => [
+                            'year_month' => ['type' => 'string', 'description' => 'Calendar month as YYYY-MM'],
+                            'category' => ['type' => 'string', 'description' => 'Category label, e.g. Food, Transport'],
+                            'amount_cents' => ['type' => 'integer', 'description' => 'Planned spend in cents'],
+                            'currency' => ['type' => 'string'],
+                            'notes' => ['type' => 'string'],
+                        ],
+                        'required' => ['year_month', 'category', 'amount_cents'],
+                    ],
+                ],
+            ],
+            [
+                'type' => 'function',
+                'function' => [
+                    'name' => 'delete_monthly_budget_allocation',
+                    'description' => 'Remove a monthly budget slot for a category and month.',
+                    'parameters' => [
+                        'type' => 'object',
+                        'additionalProperties' => false,
+                        'properties' => [
+                            'year_month' => ['type' => 'string', 'description' => 'YYYY-MM'],
+                            'category' => ['type' => 'string'],
+                        ],
+                        'required' => ['year_month', 'category'],
+                    ],
+                ],
+            ],
+            [
+                'type' => 'function',
+                'function' => [
+                    'name' => 'log_expense',
+                    'description' => 'Record a one-off expense (amount and category; optional place, time, GPS).',
+                    'parameters' => [
+                        'type' => 'object',
+                        'additionalProperties' => false,
+                        'properties' => [
+                            'category' => ['type' => 'string', 'description' => 'Budget category label, e.g. Food, Transport'],
+                            'amount_cents' => ['type' => 'integer', 'description' => 'Amount in cents'],
+                            'currency' => ['type' => 'string'],
+                            'spent_at' => ['type' => 'string', 'description' => 'ISO 8601 date or datetime; omit for “now”'],
+                            'place_label' => ['type' => 'string', 'description' => 'Shop, restaurant, or area'],
+                            'latitude' => ['type' => 'number'],
+                            'longitude' => ['type' => 'number'],
+                            'location_accuracy_m' => ['type' => 'integer'],
+                            'notes' => ['type' => 'string'],
+                        ],
+                        'required' => ['category', 'amount_cents'],
+                    ],
+                ],
+            ],
+            [
+                'type' => 'function',
+                'function' => [
+                    'name' => 'delete_expense',
+                    'description' => 'Delete a logged expense by id; optional year_month must match the row.',
+                    'parameters' => [
+                        'type' => 'object',
+                        'additionalProperties' => false,
+                        'properties' => [
+                            'id' => ['type' => 'integer'],
+                            'year_month' => ['type' => 'string', 'description' => 'YYYY-MM'],
+                        ],
+                        'required' => ['id'],
                     ],
                 ],
             ],
